@@ -3,6 +3,9 @@ import pandas as pd
 from datetime import date, timedelta
 import os
 from dotenv import load_dotenv
+import sqlite3
+
+# ===== ENVIRONNENTALS =======
 
 load_dotenv()
 
@@ -15,12 +18,20 @@ if not all([CLIENT_ID, CLIENT_SECRET, ACCESS_TOKEN, REFRESH_TOKEN]):
     print("fix your .env")
     exit(1)
 
+# ============================
+
+# ===== API SETUP =======
+
 auth_client = fitbit.Fitbit(CLIENT_ID, CLIENT_SECRET,
                           access_token=ACCESS_TOKEN,
                           refresh_token=REFRESH_TOKEN,
                           system='en_US')
 
-# Date setup
+# =======================
+
+
+# ===== DATE SETUP ========
+
 curr = date.today()
 history = 30
 while history>0:
