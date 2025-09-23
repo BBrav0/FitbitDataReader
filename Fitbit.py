@@ -58,9 +58,24 @@ cur = con.cursor()
 
 cur.execute("""
 
-        CREATE TABLE IF NOT EXISTS dailys (
+        CREATE TABLE IF NOT EXISTS dailybase (
             date TEXT PRIMARY KEY,
             rhr INTEGER
+        )
+
+""")
+
+cur.execute("""
+
+        CREATE TABLE IF NOT EXISTS dailyruns (
+            date TEXT PRIMARY KEY,
+            distance REAL
+            duration INTEGER
+            steps INTEGER
+            minhr INTEGER
+            maxhr INTEGER
+            avghr INTEGER
+            calories INTEGER
         )
 
 """)
