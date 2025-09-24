@@ -243,6 +243,9 @@ while curr >= start_date:
         else:
             print(f"  No runs found for {curr}")
             
+        # Move to previous day after successful processing (regardless of runs found)
+        curr = curr - timedelta(1)
+        
     except requests.exceptions.Timeout:
         print(f"  ⚠ Timeout getting activities for {curr} - skipping")
         # Move to previous day
