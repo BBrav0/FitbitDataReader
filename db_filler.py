@@ -7,15 +7,114 @@ import sqlite3 as sql
 import time
 import requests
 
-def cache_run(date_str, distance, duration, steps, minhr, maxhr, avghr, calories, resting_hr=0):
+def format_duration(ms):
+    """Convert milliseconds to H:MM:SS string."""
+    try:
+        total_seconds = max(0, int(ms) // 1000)
+    except Exception:
+        return None
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    return f"{hours}:{minutes:02d}:{seconds:02d}"
+
+def format_pace(distance_miles, ms):
+    """Compute average pace as HH:MM:SS string (zero-padded hours).
+    Returns None if distance is invalid or ms is None.
+    """
+    if distance_miles is None or ms is None:
+        return None
+    try:
+        distance = float(distance_miles)
+        if distance <= 0:
+            return None
+        total_seconds = max(0, int(ms) // 1000)
+        seconds_per_mile = int(round(total_seconds / distance))
+        hours = seconds_per_mile // 3600
+        minutes = (seconds_per_mile % 3600) // 60
+        seconds = seconds_per_mile % 60
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    except Exception:
+        return None
+
+def elevation_gain_from_tcx(xml_text: str) -> float:
+    """Sum positive altitude deltas from TCX content. Returns meters."""
+    try:
+        import re
+        alts = [float(x) for x in re.findall(r"<AltitudeMeters>([-+]?[0-9]*\.?[0-9]+)</AltitudeMeters>", xml_text or "")]
+        if not alts:
+            return 0.0
+        gain = 0.0
+        prev = alts[0]
+        for a in alts[1:]:
+            delta = a - prev
+            if delta > 0:
+                gain += delta
+            prev = a
+        return gain
+    except Exception:
+        return 0.0
+
+def compute_elevation_gain_feet(activity: dict, access_token: str) -> float:
+    """Get elevation gain in feet using API field if available, else TCX fallback."""
+    elev_m = activity.get('elevationGain')
+    try:
+        if elev_m is not None:
+            return float(elev_m) * 3.28084
+    except Exception:
+        pass
+    # Fallback to TCX
+    tcx_link = activity.get('tcxLink')
+    log_id = activity.get('logId')
+    tcx_xml = None
+    try:
+        if tcx_link:
+            r = requests.get(tcx_link, headers={'Authorization': f'Bearer {access_token}'}, timeout=30)
+            if r.status_code == 200:
+                tcx_xml = r.text
+        if tcx_xml is None and log_id:
+            url = f"https://api.fitbit.com/1/user/-/activities/{log_id}.tcx"
+            r = requests.get(url, headers={'Authorization': f'Bearer {access_token}'}, timeout=30)
+            if r.status_code == 200:
+                tcx_xml = r.text
+    except Exception:
+        tcx_xml = None
+    elev_from_tcx_m = elevation_gain_from_tcx(tcx_xml) if tcx_xml else 0.0
+    return elev_from_tcx_m * 3.28084
+
+def cache_run(date_str, distance, duration, steps, minhr, maxhr, avghr, calories, resting_hr=0, elev_gain_ft=None, has_run=1):
     con = sql.connect("cache.db")
     cur = con.cursor()
 
-    cur.execute("""
-        INSERT OR REPLACE INTO runs (date, distance, duration, steps, minhr, maxhr, avghr, calories, resting_hr) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (date_str, distance, duration, steps, minhr, maxhr, avghr, calories, resting_hr))
+    # Store duration as formatted H:MM:SS string from milliseconds
+    formatted_duration = format_duration(duration) if duration is not None else None
+    average_pace = format_pace(distance, duration)
+    elev_gain_per_mile = None
+    try:
+        if elev_gain_ft is not None and distance not in (None, 0):
+            elev_gain_per_mile = float(elev_gain_ft) / float(distance)
+    except Exception:
+        elev_gain_per_mile = None
 
+    cur.execute("""
+        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain_ft, elev_gain_per_mile, steps, minhr, maxhr, avghr, calories, resting_hr, has_run) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (date_str, distance, formatted_duration, average_pace, elev_gain_ft, elev_gain_per_mile, steps, minhr, maxhr, avghr, calories, resting_hr, has_run))
+
+    con.commit()
+    con.close()
+
+def cache_no_run(date_str):
+    """Insert a placeholder for a date with no runs to avoid future API calls."""
+    con = sql.connect("cache.db")
+    cur = con.cursor()
+    cur.execute(
+        """
+        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain_ft, elev_gain_per_mile, steps, minhr, maxhr, avghr, calories, resting_hr, has_run)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (date_str, None, None, None, None, None, None, None, None, None, None, None, 0),
+    )
     con.commit()
     con.close()
 
@@ -74,19 +173,45 @@ cur.execute("""
         CREATE TABLE IF NOT EXISTS runs (
             date TEXT PRIMARY KEY,
             distance REAL,
-            duration INTEGER,
+            duration TEXT,
+            avg_pace TEXT,
+            elev_gain_ft REAL,
+            elev_gain_per_mile REAL,
             steps INTEGER,
             minhr INTEGER,
             maxhr INTEGER,
             avghr INTEGER,
             calories INTEGER,
-            resting_hr INTEGER
+            resting_hr INTEGER,
+            has_run INTEGER
         )
 
 """)
 
 con.commit()
 con.close()
+
+# Ensure schema has has_run, avg_pace and elev_gain_ft columns for existing databases
+try:
+    con = sql.connect("cache.db")
+    cur = con.cursor()
+    cur.execute("PRAGMA table_info(runs)")
+    columns = [row[1] for row in cur.fetchall()]
+    if 'has_run' not in columns:
+        cur.execute("ALTER TABLE runs ADD COLUMN has_run INTEGER")
+        con.commit()
+    if 'avg_pace' not in columns:
+        cur.execute("ALTER TABLE runs ADD COLUMN avg_pace TEXT")
+        con.commit()
+    if 'elev_gain_ft' not in columns:
+        cur.execute("ALTER TABLE runs ADD COLUMN elev_gain_ft REAL")
+        con.commit()
+    if 'elev_gain_per_mile' not in columns:
+        cur.execute("ALTER TABLE runs ADD COLUMN elev_gain_per_mile REAL")
+        con.commit()
+    con.close()
+except Exception as e:
+    print(f"warning: could not ensure has_run column exists: {e}")
 
 print("db ready")
 
@@ -101,25 +226,32 @@ start_date = date(2025, 2, 20)
 curr = date.today()
 request_count = 0
 
-# Check if we have data for the current date
-def date_exists_in_db(check_date):
-    """Check if a date already exists in the database"""
+# Check if we have complete data for the current date
+def date_is_complete(check_date):
+    """Return True if the row exists and required fields are present.
+    Rule: if has_run==0 it's complete; if has_run==1, require elev_gain_ft not NULL.
+    """
     try:
         con = sql.connect("cache.db")
         cur = con.cursor()
-        cur.execute("SELECT COUNT(*) FROM runs WHERE date = ?", (str(check_date),))
-        count = cur.fetchone()[0]
+        cur.execute("SELECT has_run, elev_gain_ft, elev_gain_per_mile FROM runs WHERE date = ?", (str(check_date),))
+        row = cur.fetchone()
         con.close()
-        return count > 0
-    except:
+        if row is None:
+            return False
+        has_run_val, elev_gain_ft_val, elev_gain_per_mile_val = row
+        if (has_run_val or 0) == 0:
+            return True
+        return (elev_gain_ft_val is not None) and (elev_gain_per_mile_val is not None)
+    except Exception:
         return False
 
 while curr >= start_date:
-    # Check if date already exists in database
-    if date_exists_in_db(curr):
-        print(f"✓ Data already exists for {curr} - all previous dates have been processed")
-        print("Exiting program - no more data to fetch")
-        break
+    # Check if date already exists in database; if so, skip API request and move on
+    if date_is_complete(curr):
+        print(f"✓ Data already complete for {curr} - skipping API")
+        curr = curr - timedelta(1)
+        continue
     
     days_remaining = (curr - start_date).days + 1
     print(f"Processing {curr} ({days_remaining} days remaining)...")
@@ -158,6 +290,8 @@ while curr >= start_date:
                     avg_hr = 0
                     max_hr = 0
                     min_hr = 0
+                    # Compute elevation gain in feet
+                    elev_gain_ft = compute_elevation_gain_feet(activity, ACCESS_TOKEN)
                     
                     if tcx_link:
                         try:
@@ -189,6 +323,7 @@ while curr >= start_date:
                     # Get resting heart rate for the day
                     resting_hr = get_resting_heart_rate(date_str)
                     print(f"    Resting HR: {resting_hr}")
+                    print(f"    Elevation Gain (ft): {elev_gain_ft:.1f}")
                     
                     # Try to construct TCX URL manually if not available
                     log_id = activity.get('logId', 'N/A')
@@ -238,10 +373,12 @@ while curr >= start_date:
                     print("-" * 50)
                     # Cache the run data with heart rate info from TCX and resting HR
                     cache_run(date_str, activity.get('distance', 0), activity.get('duration', 0), 
-                            activity.get('steps', 0), min_hr, max_hr, avg_hr, activity.get('calories', 0), resting_hr)
+                            activity.get('steps', 0), min_hr, max_hr, avg_hr, activity.get('calories', 0), resting_hr, elev_gain_ft, has_run=1)
                     break
         else:
             print(f"  No runs found for {curr}")
+            # Cache a placeholder to avoid re-querying this date
+            cache_no_run(str(curr))
             
         # Move to previous day after successful processing (regardless of runs found)
         curr = curr - timedelta(1)
@@ -260,8 +397,8 @@ while curr >= start_date:
         error_msg = str(e)
         if 'retry-after' in error_msg.lower():
             print(f"  ⚠ Rate limit hit for {curr}: {e}")
-            print("  Waiting 30 seconds before retry...")
-            time.sleep(30)
+            print("  Waiting 100 seconds before retry...")
+            time.sleep(100)
             # Don't move to next date - retry the same date
             continue
         else:
