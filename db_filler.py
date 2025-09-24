@@ -88,6 +88,15 @@ def cache_run(date_str, distance, duration, steps, minhr, maxhr, avghr, calories
 
     # Store duration as formatted H:MM:SS string from milliseconds
     formatted_duration = format_duration(duration) if duration is not None else None
+    # Compute cadence (steps per minute) as integer (rounded)
+    cadence = None
+    try:
+        minutes = (int(duration) / 60000.0) if duration is not None else None
+        if minutes and minutes > 0 and steps is not None:
+            cadence_value = float(steps) / float(minutes)
+            cadence = int(round(cadence_value))
+    except Exception:
+        cadence = None
     average_pace = format_pace(distance, duration)
     elev_gain_per_mile = None
     try:
@@ -96,10 +105,20 @@ def cache_run(date_str, distance, duration, steps, minhr, maxhr, avghr, calories
     except Exception:
         elev_gain_per_mile = None
 
+    # Round REALs to two decimal places
+    def round2(value):
+        try:
+            return round(float(value), 2)
+        except Exception:
+            return value
+    distance = round2(distance) if distance is not None else None
+    elev_gain_ft = round2(elev_gain_ft) if elev_gain_ft is not None else None
+    elev_gain_per_mile = round2(elev_gain_per_mile) if elev_gain_per_mile is not None else None
+
     cur.execute("""
-        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain_ft, elev_gain_per_mile, steps, minhr, maxhr, avghr, calories, resting_hr, has_run) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (date_str, distance, formatted_duration, average_pace, elev_gain_ft, elev_gain_per_mile, steps, minhr, maxhr, avghr, calories, resting_hr, has_run))
+        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain_ft, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (date_str, distance, formatted_duration, average_pace, elev_gain_ft, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run))
 
     con.commit()
     con.close()
@@ -110,10 +129,26 @@ def cache_no_run(date_str):
     cur = con.cursor()
     cur.execute(
         """
-        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain_ft, elev_gain_per_mile, steps, minhr, maxhr, avghr, calories, resting_hr, has_run)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain_ft, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (date_str, None, None, None, None, None, None, None, None, None, None, None, 0),
+        (date_str, None, None, None, None, None, None, None, None, None, None, None, None, 0),
+    )
+    con.commit()
+    con.close()
+
+def cache_pending(date_str):
+    """Insert a placeholder for a date to ensure an entry exists.
+    Uses has_run = 0 (no run) as the default state.
+    """
+    con = sql.connect("cache.db")
+    cur = con.cursor()
+    cur.execute(
+        """
+        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain_ft, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (date_str, None, None, None, None, None, None, None, None, None, None, None, None, 0),
     )
     con.commit()
     con.close()
@@ -178,6 +213,7 @@ cur.execute("""
             elev_gain_ft REAL,
             elev_gain_per_mile REAL,
             steps INTEGER,
+            cadence INTEGER,
             minhr INTEGER,
             maxhr INTEGER,
             avghr INTEGER,
@@ -209,6 +245,58 @@ try:
     if 'elev_gain_per_mile' not in columns:
         cur.execute("ALTER TABLE runs ADD COLUMN elev_gain_per_mile REAL")
         con.commit()
+    # Ensure cadence column exists and is INTEGER type; migrate if needed
+    cur.execute("PRAGMA table_info(runs)")
+    info = cur.fetchall()
+    col_types = {row[1]: (row[2] or '').upper() for row in info}
+    if 'cadence' not in col_types:
+        cur.execute("ALTER TABLE runs ADD COLUMN cadence INTEGER")
+        con.commit()
+    elif col_types.get('cadence') != 'INTEGER':
+        # Migrate table to make cadence INTEGER via table recreate
+        try:
+            cur.execute("BEGIN TRANSACTION")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runs_new (
+                    date TEXT PRIMARY KEY,
+                    distance REAL,
+                    duration TEXT,
+                    avg_pace TEXT,
+                    elev_gain_ft REAL,
+                    elev_gain_per_mile REAL,
+                    steps INTEGER,
+                    cadence INTEGER,
+                    minhr INTEGER,
+                    maxhr INTEGER,
+                    avghr INTEGER,
+                    calories INTEGER,
+                    resting_hr INTEGER,
+                    has_run INTEGER
+                )
+                """
+            )
+            # Copy with cadence cast to INTEGER (rounded)
+            cur.execute(
+                """
+                INSERT OR REPLACE INTO runs_new (
+                    date, distance, duration, avg_pace, elev_gain_ft, elev_gain_per_mile,
+                    steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run
+                )
+                SELECT
+                    date, distance, duration, avg_pace, elev_gain_ft, elev_gain_per_mile,
+                    steps,
+                    CASE WHEN cadence IS NULL THEN NULL ELSE CAST(ROUND(cadence) AS INTEGER) END,
+                    minhr, maxhr, avghr, calories, resting_hr, has_run
+                FROM runs
+                """
+            )
+            cur.execute("DROP TABLE runs")
+            cur.execute("ALTER TABLE runs_new RENAME TO runs")
+            con.commit()
+        except Exception as me:
+            con.rollback()
+            print(f"warning: cadence type migration failed: {me}")
     con.close()
 except Exception as e:
     print(f"warning: could not ensure has_run column exists: {e}")
@@ -225,6 +313,51 @@ current_year = date.today().year
 start_date = date(2025, 2, 20)
 curr = date.today()
 request_count = 0
+
+# Date helpers
+def padded_date_string(d):
+    try:
+        return f"{d.year:04d}-{d.month:02d}-{d.day:02d}"
+    except Exception:
+        return str(d)
+
+def unpadded_date_string(d):
+    try:
+        return f"{d.year}-{d.month}-{d.day}"
+    except Exception:
+        return str(d)
+
+# Preload all existing dates for fast membership checks (normalized variants)
+def load_existing_dates():
+    try:
+        con = sql.connect("cache.db")
+        cur = con.cursor()
+        cur.execute("SELECT date FROM runs")
+        rows = cur.fetchall()
+        con.close()
+        s = set()
+        for (raw,) in rows:
+            if raw is None:
+                continue
+            raw_stripped = str(raw).strip()
+            s.add(raw_stripped)
+            # Try to parse basic YYYY-MM-DD and also store unpadded/padded variants
+            try:
+                parts = raw_stripped.split("-")
+                if len(parts) == 3:
+                    y = int(parts[0])
+                    m = int(parts[1])
+                    d2 = int(parts[2])
+                    s.add(f"{y:04d}-{m:02d}-{d2:02d}")
+                    s.add(f"{y}-{m}-{d2}")
+            except Exception:
+                pass
+        return s
+    except Exception:
+        return set()
+
+existing_dates = load_existing_dates()
+failure_counts = {}
 
 # Check if we have complete data for the current date
 def date_is_complete(check_date):
@@ -246,12 +379,61 @@ def date_is_complete(check_date):
     except Exception:
         return False
 
+def date_exists(check_date):
+    """Return True if any row exists for the given date, regardless of completeness."""
+    try:
+        con = sql.connect("cache.db")
+        cur = con.cursor()
+        cur.execute("SELECT 1 FROM runs WHERE date = ? LIMIT 1", (str(check_date),))
+        row = cur.fetchone()
+        con.close()
+        return row is not None
+    except Exception:
+        return False
+
+def date_exists_loose(check_date):
+    """Return True if any row exists for the date, allowing suffixes (e.g., time).
+    Matches exact date or values starting with the date string.
+    """
+    try:
+        s_padded = padded_date_string(check_date)
+        s_unpadded = unpadded_date_string(check_date)
+        con = sql.connect("cache.db")
+        cur = con.cursor()
+        cur.execute(
+            """
+            SELECT 1 FROM runs
+            WHERE date = ? OR date = ? OR date LIKE ? OR date LIKE ?
+            LIMIT 1
+            """,
+            (s_padded, s_unpadded, s_padded + '%', s_unpadded + '%')
+        )
+        row = cur.fetchone()
+        con.close()
+        return row is not None
+    except Exception:
+        return False
+
 while curr >= start_date:
-    # Check if date already exists in database; if so, skip API request and move on
+    # Skip only if the date is fully complete
+    padded = padded_date_string(curr)
+    unpadded = unpadded_date_string(curr)
     if date_is_complete(curr):
-        print(f"✓ Data already complete for {curr} - skipping API")
+        print(f"✓ Data already complete for {padded} - skipping API")
         curr = curr - timedelta(1)
         continue
+
+    # Ensure a pending placeholder exists so interruptions still leave a row
+    try:
+        con = sql.connect("cache.db")
+        cur = con.cursor()
+        cur.execute("SELECT 1 FROM runs WHERE date = ? OR date = ? OR date LIKE ? OR date LIKE ? LIMIT 1", (padded, unpadded, padded + '%', unpadded + '%'))
+        exists_row = cur.fetchone() is not None
+        con.close()
+    except Exception:
+        exists_row = False
+    if not exists_row:
+        cache_pending(padded)
     
     days_remaining = (curr - start_date).days + 1
     print(f"Processing {curr} ({days_remaining} days remaining)...")
@@ -374,17 +556,35 @@ while curr >= start_date:
                     # Cache the run data with heart rate info from TCX and resting HR
                     cache_run(date_str, activity.get('distance', 0), activity.get('duration', 0), 
                             activity.get('steps', 0), min_hr, max_hr, avg_hr, activity.get('calories', 0), resting_hr, elev_gain_ft, has_run=1)
+                    existing_dates.add(date_str.strip())
+                    try:
+                        # Also add alt normalized forms
+                        parts = date_str.strip().split("-")
+                        if len(parts) == 3:
+                            y = int(parts[0]); m = int(parts[1]); d2 = int(parts[2])
+                            existing_dates.add(f"{y:04d}-{m:02d}-{d2:02d}")
+                            existing_dates.add(f"{y}-{m}-{d2}")
+                    except Exception:
+                        pass
                     break
         else:
             print(f"  No runs found for {curr}")
             # Cache a placeholder to avoid re-querying this date
-            cache_no_run(str(curr))
+            cache_no_run(padded_date_string(curr))
+            existing_dates.add(padded)
+            existing_dates.add(unpadded)
             
         # Move to previous day after successful processing (regardless of runs found)
         curr = curr - timedelta(1)
         
     except requests.exceptions.Timeout:
-        print(f"  ⚠ Timeout getting activities for {curr} - skipping")
+        print(f"  ⚠ Timeout getting activities for {curr}")
+        key = padded_date_string(curr)
+        failure_counts[key] = failure_counts.get(key, 0) + 1
+        if failure_counts[key] >= 2:
+            print(f"  ⚠ Marking {key} as no-run after repeated timeouts")
+            cache_no_run(key)
+            existing_dates.add(key)
         # Move to previous day
         curr = curr - timedelta(1)
     except requests.exceptions.RequestException as e:
@@ -403,6 +603,12 @@ while curr >= start_date:
             continue
         else:
             print(f"  ❌ Error getting activities for {curr}: {e}")
+            key = padded_date_string(curr)
+            failure_counts[key] = failure_counts.get(key, 0) + 1
+            if failure_counts[key] >= 2:
+                print(f"  ⚠ Marking {key} as no-run after repeated errors")
+                cache_no_run(key)
+                existing_dates.add(key)
             # Move to previous day for other errors
             curr = curr - timedelta(1)
 
