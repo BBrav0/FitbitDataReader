@@ -2,35 +2,36 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
+import sqlite3 as sql
 
-df = pd.read_json('runs.json')
+# Import cache database as an array
+def load_cache_data():
+    """Load all data from cache.db into a pandas DataFrame"""
+    con = sql.connect("cache.db")
+    df = pd.read_sql_query("SELECT * FROM runs", con)
+    con.close()
+    return df
 
-df['date'] = pd.to_datetime(df['date'])
+# Load the data
+cache_data = load_cache_data()
+print(f"Loaded {len(cache_data)} records from cache database")
+print(f"Columns: {list(cache_data.columns)}")
+print(f"Date range: {cache_data['date'].min()} to {cache_data['date'].max()}")
 
-# Filter out null values for resting_hr
-df_clean = df.dropna(subset=['resting_hr'])
+# Find the run with the highest heart rate range (maxhr - minhr)
+# Method 1: Using pandas operations (more efficient)
+cache_data['hr_range'] = cache_data['maxhr'] - cache_data['minhr']
+max_hr_range_idx = cache_data['hr_range'].idxmax()
+max_hr_range_run = cache_data.loc[max_hr_range_idx]
 
-# Create the scatter plot
-plt.figure(figsize=(12, 6))
-plt.scatter(df_clean['date'], df_clean['resting_hr'], alpha=0.6, label='Data Points')
+print(f"Date with highest HR range: {max_hr_range_run['date']}")
+print(f"HR range: {max_hr_range_run['maxhr']} - {max_hr_range_run['minhr']} = {max_hr_range_run['hr_range']}")
 
-# Convert dates to numeric values for trend line calculation
-date_numeric = pd.to_numeric(df_clean['date'])
+# Method 2: Manual iteration (your original approach, but fixed)
+temp = cache_data.iloc[0]  # Get first row properly
+for index, run in cache_data.iterrows():  # Iterate over rows, not columns
+    if run['maxhr'] - run['minhr'] > temp['maxhr'] - temp['minhr']:
+        temp = run
 
-# Calculate trend line using linear regression
-slope, intercept, r_value, p_value, std_err = stats.linregress(date_numeric, df_clean['resting_hr'])
-
-# Create trend line
-trend_line = slope * date_numeric + intercept
-
-# Plot the trend line
-plt.plot(df_clean['date'], trend_line, 'r-', linewidth=2, label=f'Trend Line (R² = {r_value**2:.3f})')
-
-plt.xlabel('Date')
-plt.ylabel('Resting Heart Rate')
-plt.title('Resting Heart Rate Over Time with Trend Line')
-plt.legend()
-plt.xticks(rotation=45)
-plt.tight_layout()
-
-plt.show() 
+print(f"Date with highest HR range (manual): {temp['date']}")
+print(f"HR range (manual): {temp['maxhr']} - {temp['minhr']} = {temp['maxhr'] - temp['minhr']}")
