@@ -55,7 +55,7 @@ def elevation_gain_from_tcx(xml_text: str) -> float:
     except Exception:
         return 0.0
 
-def compute_elevation_gain_feet(activity: dict, access_token: str) -> float:
+def compute_elevation_gain(activity: dict, access_token: str) -> float:
     """Get elevation gain in feet using API field if available, else TCX fallback."""
     elev_m = activity.get('elevationGain')
     try:
@@ -82,7 +82,7 @@ def compute_elevation_gain_feet(activity: dict, access_token: str) -> float:
     elev_from_tcx_m = elevation_gain_from_tcx(tcx_xml) if tcx_xml else 0.0
     return elev_from_tcx_m * 3.28084
 
-def cache_run(date_str, distance, duration, steps, minhr, maxhr, avghr, calories, resting_hr=0, elev_gain_ft=None, has_run=1):
+def cache_run(date_str, distance, duration, steps, minhr, maxhr, avghr, calories, resting_hr=0, elev_gain=None, has_run=1):
     con = sql.connect("cache.db")
     cur = con.cursor()
 
@@ -100,8 +100,8 @@ def cache_run(date_str, distance, duration, steps, minhr, maxhr, avghr, calories
     average_pace = format_pace(distance, duration)
     elev_gain_per_mile = None
     try:
-        if elev_gain_ft is not None and distance not in (None, 0):
-            elev_gain_per_mile = float(elev_gain_ft) / float(distance)
+        if elev_gain is not None and distance not in (None, 0):
+            elev_gain_per_mile = float(elev_gain) / float(distance)
     except Exception:
         elev_gain_per_mile = None
 
@@ -112,13 +112,13 @@ def cache_run(date_str, distance, duration, steps, minhr, maxhr, avghr, calories
         except Exception:
             return value
     distance = round2(distance) if distance is not None else None
-    elev_gain_ft = round2(elev_gain_ft) if elev_gain_ft is not None else None
+    elev_gain = round2(elev_gain) if elev_gain is not None else None
     elev_gain_per_mile = round2(elev_gain_per_mile) if elev_gain_per_mile is not None else None
 
     cur.execute("""
-        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain_ft, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run) 
+        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run) 
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (date_str, distance, formatted_duration, average_pace, elev_gain_ft, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run))
+    """, (date_str, distance, formatted_duration, average_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run))
 
     con.commit()
     con.close()
@@ -129,7 +129,7 @@ def cache_no_run(date_str):
     cur = con.cursor()
     cur.execute(
         """
-        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain_ft, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run)
+        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (date_str, None, None, None, None, None, None, None, None, None, None, None, None, 0),
@@ -145,7 +145,7 @@ def cache_pending(date_str):
     cur = con.cursor()
     cur.execute(
         """
-        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain_ft, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run)
+        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (date_str, None, None, None, None, None, None, None, None, None, None, None, None, 0),
@@ -210,7 +210,7 @@ cur.execute("""
             distance REAL,
             duration TEXT,
             avg_pace TEXT,
-            elev_gain_ft REAL,
+            elev_gain REAL,
             elev_gain_per_mile REAL,
             steps INTEGER,
             cadence INTEGER,
@@ -227,7 +227,7 @@ cur.execute("""
 con.commit()
 con.close()
 
-# Ensure schema has has_run, avg_pace and elev_gain_ft columns for existing databases
+# Ensure schema has has_run, avg_pace and elev_gain columns for existing databases
 try:
     con = sql.connect("cache.db")
     cur = con.cursor()
@@ -239,8 +239,8 @@ try:
     if 'avg_pace' not in columns:
         cur.execute("ALTER TABLE runs ADD COLUMN avg_pace TEXT")
         con.commit()
-    if 'elev_gain_ft' not in columns:
-        cur.execute("ALTER TABLE runs ADD COLUMN elev_gain_ft REAL")
+    if 'elev_gain' not in columns:
+        cur.execute("ALTER TABLE runs ADD COLUMN elev_gain REAL")
         con.commit()
     if 'elev_gain_per_mile' not in columns:
         cur.execute("ALTER TABLE runs ADD COLUMN elev_gain_per_mile REAL")
@@ -263,7 +263,7 @@ try:
                     distance REAL,
                     duration TEXT,
                     avg_pace TEXT,
-                    elev_gain_ft REAL,
+                    elev_gain REAL,
                     elev_gain_per_mile REAL,
                     steps INTEGER,
                     cadence INTEGER,
@@ -280,11 +280,11 @@ try:
             cur.execute(
                 """
                 INSERT OR REPLACE INTO runs_new (
-                    date, distance, duration, avg_pace, elev_gain_ft, elev_gain_per_mile,
+                    date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile,
                     steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run
                 )
                 SELECT
-                    date, distance, duration, avg_pace, elev_gain_ft, elev_gain_per_mile,
+                    date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile,
                     steps,
                     CASE WHEN cadence IS NULL THEN NULL ELSE CAST(ROUND(cadence) AS INTEGER) END,
                     minhr, maxhr, avghr, calories, resting_hr, has_run
@@ -362,20 +362,20 @@ failure_counts = {}
 # Check if we have complete data for the current date
 def date_is_complete(check_date):
     """Return True if the row exists and required fields are present.
-    Rule: if has_run==0 it's complete; if has_run==1, require elev_gain_ft not NULL.
+    Rule: if has_run==0 it's complete; if has_run==1, require elev_gain not NULL.
     """
     try:
         con = sql.connect("cache.db")
         cur = con.cursor()
-        cur.execute("SELECT has_run, elev_gain_ft, elev_gain_per_mile FROM runs WHERE date = ?", (str(check_date),))
+        cur.execute("SELECT has_run, elev_gain, elev_gain_per_mile FROM runs WHERE date = ?", (str(check_date),))
         row = cur.fetchone()
         con.close()
         if row is None:
             return False
-        has_run_val, elev_gain_ft_val, elev_gain_per_mile_val = row
+        has_run_val, elev_gain_val, elev_gain_per_mile_val = row
         if (has_run_val or 0) == 0:
             return True
-        return (elev_gain_ft_val is not None) and (elev_gain_per_mile_val is not None)
+        return (elev_gain_val is not None) and (elev_gain_per_mile_val is not None)
     except Exception:
         return False
 
@@ -473,7 +473,7 @@ while curr >= start_date:
                     max_hr = 0
                     min_hr = 0
                     # Compute elevation gain in feet
-                    elev_gain_ft = compute_elevation_gain_feet(activity, ACCESS_TOKEN)
+                    elev_gain = compute_elevation_gain(activity, ACCESS_TOKEN)
                     
                     if tcx_link:
                         try:
@@ -505,7 +505,7 @@ while curr >= start_date:
                     # Get resting heart rate for the day
                     resting_hr = get_resting_heart_rate(date_str)
                     print(f"    Resting HR: {resting_hr}")
-                    print(f"    Elevation Gain (ft): {elev_gain_ft:.1f}")
+                    print(f"    Elevation Gain (ft): {elev_gain:.1f}")
                     
                     # Try to construct TCX URL manually if not available
                     log_id = activity.get('logId', 'N/A')
@@ -555,7 +555,7 @@ while curr >= start_date:
                     print("-" * 50)
                     # Cache the run data with heart rate info from TCX and resting HR
                     cache_run(date_str, activity.get('distance', 0), activity.get('duration', 0), 
-                            activity.get('steps', 0), min_hr, max_hr, avg_hr, activity.get('calories', 0), resting_hr, elev_gain_ft, has_run=1)
+                            activity.get('steps', 0), min_hr, max_hr, avg_hr, activity.get('calories', 0), resting_hr, elev_gain, has_run=1)
                     existing_dates.add(date_str.strip())
                     try:
                         # Also add alt normalized forms
