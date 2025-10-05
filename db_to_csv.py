@@ -16,13 +16,13 @@ def export_runs_to_csv(db_path="cache.db", csv_path="runs_data.csv"):
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        # Get column names from the runs table
+        # Get column names from the runs table, excluding has_run
         cursor.execute("PRAGMA table_info(runs)")
         columns_info = cursor.fetchall()
-        column_names = [col[1] for col in columns_info]
+        column_names = [col[1] for col in columns_info if col[1] != 'has_run']
 
-        # Query to select all records where has_run is 1
-        query = "SELECT * FROM runs WHERE has_run = 1"
+        # Query to select all records where has_run is 1, excluding the has_run column
+        query = "SELECT " + ", ".join([col for col in column_names]) + " FROM runs WHERE has_run = 1"
         cursor.execute(query)
 
         # Fetch all the records
