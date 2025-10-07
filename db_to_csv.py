@@ -21,8 +21,12 @@ def export_runs_to_csv(db_path="cache.db", csv_path="runs_data.csv"):
         columns_info = cursor.fetchall()
         column_names = [col[1] for col in columns_info if col[1] != 'has_run']
 
-        # Query to select all records where has_run is 1, excluding the has_run column
-        query = "SELECT " + ", ".join([col for col in column_names]) + " FROM runs WHERE has_run = 1"
+        # Query to select all records where has_run is 1, excluding the has_run column, ordered by date ascending
+        query = (
+            "SELECT "
+            + ", ".join([col for col in column_names])
+            + " FROM runs WHERE has_run = 1 ORDER BY date(date) ASC"
+        )
         cursor.execute(query)
 
         # Fetch all the records
