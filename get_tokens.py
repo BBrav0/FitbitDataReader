@@ -5,9 +5,10 @@ This script will help you get your ACCESS_TOKEN and REFRESH_TOKEN
 import os
 import webbrowser
 import urllib.parse
-from dotenv import load_dotenv
+from dotenv import load_dotenv,set_key,find_dotenv  
 
 # Load environment variables
+dotenv_path = find_dotenv()
 load_dotenv()
 
 # Your Fitbit app credentials
@@ -75,22 +76,10 @@ try:
     
     tokens = response.json()
     
-    print("Success! Here are your tokens:")
-    print("=" * 40)
-    print(f"ACCESS_TOKEN={tokens['access_token']}")
-    print(f"REFRESH_TOKEN={tokens['refresh_token']}")
-    print()
-    print("Add these to your .env file:")
-    print("=" * 40)
-    print(f"ACCESS_TOKEN={tokens['access_token']}")
-    print(f"REFRESH_TOKEN={tokens['refresh_token']}")
-    print()
-    print("Your .env file should now look like:")
-    print("=" * 40)
-    print(f"CLIENT_ID={CLIENT_ID}")
-    print(f"CLIENT_SECRET={CLIENT_SECRET}")
-    print(f"ACCESS_TOKEN={tokens['access_token']}")
-    print(f"REFRESH_TOKEN={tokens['refresh_token']}")
+    print("Success! env updated")
+
+    set_key(dotenv_path, "ACCESS_TOKEN", tokens['access_token'])
+    set_key(dotenv_path, "REFRESH_TOKEN", tokens['refresh_token'])
     
 except requests.exceptions.RequestException as e:
     print(f"Error getting tokens: {e}")
