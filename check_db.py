@@ -18,17 +18,17 @@ def check_database_state():
     for activity_type, count in results:
         print(f"  {activity_type}: {count} records")
     
-    print("\nHas_run distribution:")
-    cur.execute("SELECT has_run, COUNT(*) FROM runs GROUP BY has_run")
+    print("\nRun vs Non-run distribution:")
+    cur.execute("SELECT 
+        CASE 
+            WHEN activity_type IN ('Run', 'Treadmill run') THEN 'Run'
+            ELSE 'No Run'
+        END as run_status, 
+        COUNT(*) 
+    FROM runs GROUP BY run_status")
     results = cur.fetchall()
-    for has_run, count in results:
-        print(f"  has_run = {has_run}: {count} records")
-    
-    print("\nCombined distribution (has_run vs activity_type):")
-    cur.execute("SELECT has_run, activity_type, COUNT(*) FROM runs GROUP BY has_run, activity_type")
-    results = cur.fetchall()
-    for has_run, activity_type, count in results:
-        print(f"  has_run = {has_run}, activity_type = {activity_type}: {count} records")
+    for run_status, count in results:
+        print(f"  {run_status}: {count} records")
     
     con.close()
 

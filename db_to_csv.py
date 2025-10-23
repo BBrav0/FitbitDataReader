@@ -5,7 +5,7 @@ import os
 def export_runs_to_csv(db_path="cache.db", csv_path="runs_data.csv"):
     """
     Connects to the SQLite database, reads data from the 'runs' table,
-    filters for records where has_run = 1, and writes them to a CSV file.
+    filters for records where activity_type in ('Run', 'Treadmill run'), and writes them to a CSV file.
     """
     if not os.path.exists(db_path):
         print(f"Error: Database file not found at '{db_path}'")
@@ -16,16 +16,16 @@ def export_runs_to_csv(db_path="cache.db", csv_path="runs_data.csv"):
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        # Get column names from the runs table, excluding has_run
+        # Get all column names from the runs table
         cursor.execute("PRAGMA table_info(runs)")
         columns_info = cursor.fetchall()
-        column_names = [col[1] for col in columns_info if col[1] != 'has_run']
+        column_names = [col[1] for col in columns_info]
 
-        # Query to select all records where has_run is 1, excluding the has_run column, ordered by date ascending
+        # Query to select all records where activity_type indicates a run, ordered by date ascending
         query = (
             "SELECT "
             + ", ".join([col for col in column_names])
-            + " FROM runs WHERE has_run = 1 ORDER BY date(date) ASC"
+            + " FROM runs WHERE activity_type IN ('Run', 'Treadmill run') ORDER BY date(date) ASC"
         )
         cursor.execute(query)
 
@@ -33,7 +33,7 @@ def export_runs_to_csv(db_path="cache.db", csv_path="runs_data.csv"):
         records = cursor.fetchall()
 
         if not records:
-            print("No records found with has_run = 1.")
+            print("No records found with activity_type in ('Run', 'Treadmill run').")
             return
 
         # Write the data to a CSV file

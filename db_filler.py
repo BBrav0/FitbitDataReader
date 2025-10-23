@@ -82,7 +82,7 @@ def compute_elevation_gain(activity: dict, access_token: str) -> float:
     elev_from_tcx_m = elevation_gain_from_tcx(tcx_xml) if tcx_xml else 0.0
     return elev_from_tcx_m * 3.28084
 
-def cache_run(date_str, distance, duration, steps, minhr, maxhr, avghr, calories, resting_hr=0, elev_gain=None, has_run=1, activity_type="Run"):
+def cache_run(date_str, distance, duration, steps, minhr, maxhr, avghr, calories, resting_hr=0, elev_gain=None, activity_type="Run"):
     con = sql.connect("cache.db")
     cur = con.cursor()
 
@@ -116,9 +116,9 @@ def cache_run(date_str, distance, duration, steps, minhr, maxhr, avghr, calories
     elev_gain_per_mile = round2(elev_gain_per_mile) if elev_gain_per_mile is not None else None
 
     cur.execute("""
-        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run, activity_type) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (date_str, distance, formatted_duration, average_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run, activity_type))
+        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, activity_type) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (date_str, distance, formatted_duration, average_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, activity_type))
 
     con.commit()
     con.close()
@@ -129,26 +129,26 @@ def cache_no_run(date_str):
     cur = con.cursor()
     cur.execute(
         """
-        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run, activity_type)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, activity_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (date_str, None, None, None, None, None, None, None, None, None, None, None, None, 0, "Run"),
+        (date_str, None, None, None, None, None, None, None, None, None, None, None, None, "None"),
     )
     con.commit()
     con.close()
 
 def cache_pending(date_str):
     """Insert a placeholder for a date to ensure an entry exists.
-    Uses has_run = 0 (no run) as the default state.
+    Uses activity_type = 'None' (no run) as the default state.
     """
     con = sql.connect("cache.db")
     cur = con.cursor()
     cur.execute(
         """
-        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run, activity_type)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, activity_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (date_str, None, None, None, None, None, None, None, None, None, None, None, None, 0, "Run"),
+        (date_str, None, None, None, None, None, None, None, None, None, None, None, None, "None"),
     )
     con.commit()
     con.close()
@@ -274,7 +274,6 @@ cur.execute("""
             avghr INTEGER,
             calories INTEGER,
             resting_hr INTEGER,
-            has_run INTEGER,
             activity_type TEXT
         )
 
@@ -283,15 +282,12 @@ cur.execute("""
 con.commit()
 con.close()
 
-# Ensure schema has has_run, avg_pace and elev_gain columns for existing databases
+# Ensure schema has avg_pace and elev_gain columns for existing databases
 try:
     con = sql.connect("cache.db")
     cur = con.cursor()
     cur.execute("PRAGMA table_info(runs)")
     columns = [row[1] for row in cur.fetchall()]
-    if 'has_run' not in columns:
-        cur.execute("ALTER TABLE runs ADD COLUMN has_run INTEGER")
-        con.commit()
     if 'avg_pace' not in columns:
         cur.execute("ALTER TABLE runs ADD COLUMN avg_pace TEXT")
         con.commit()
@@ -331,7 +327,6 @@ try:
                     avghr INTEGER,
                     calories INTEGER,
                     resting_hr INTEGER,
-                    has_run INTEGER,
                     activity_type TEXT
                 )
                 """
@@ -341,13 +336,13 @@ try:
                 """
                 INSERT OR REPLACE INTO runs_new (
                     date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile,
-                    steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run, activity_type
+                    steps, cadence, minhr, maxhr, avghr, calories, resting_hr, activity_type
                 )
                 SELECT
                     date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile,
                     steps,
                     CASE WHEN cadence IS NULL THEN NULL ELSE CAST(ROUND(cadence) AS INTEGER) END,
-                    minhr, maxhr, avghr, calories, resting_hr, has_run,
+                    minhr, maxhr, avghr, calories, resting_hr,
                     CASE WHEN activity_type IS NULL THEN 'Run' ELSE activity_type END
                 FROM runs
                 """
@@ -360,7 +355,7 @@ try:
             print(f"warning: cadence type migration failed: {me}")
     con.close()
 except Exception as e:
-    print(f"warning: could not ensure has_run column exists: {e}")
+    print(f"warning: could not ensure required columns exist: {e}")
 
 print("db ready")
 
@@ -423,18 +418,18 @@ failure_counts = {}
 # Check if we have complete data for the current date
 def date_is_complete(check_date):
     """Return True if the row exists and required fields are present.
-    Rule: if has_run==0 it's complete; if has_run==1, require elev_gain not NULL.
+    Rule: if activity_type=='None' it's complete; if activity_type in ('Run', 'Treadmill run'), require elev_gain not NULL.
     """
     try:
         con = sql.connect("cache.db")
         cur = con.cursor()
-        cur.execute("SELECT has_run, elev_gain, elev_gain_per_mile FROM runs WHERE date = ?", (str(check_date),))
+        cur.execute("SELECT activity_type, elev_gain, elev_gain_per_mile FROM runs WHERE date = ?", (str(check_date),))
         row = cur.fetchone()
         con.close()
         if row is None:
             return False
-        has_run_val, elev_gain_val, elev_gain_per_mile_val = row
-        if (has_run_val or 0) == 0:
+        activity_type_val, elev_gain_val, elev_gain_per_mile_val = row
+        if activity_type_val == 'None':
             return True
         return (elev_gain_val is not None) and (elev_gain_per_mile_val is not None)
     except Exception:
@@ -631,7 +626,7 @@ while curr >= start_date:
                     print("-" * 50)
                     # Cache the run data with heart rate info from TCX and resting HR
                     cache_run(date_str, activity.get('distance', 0), activity.get('duration', 0), 
-                            activity.get('steps', 0), min_hr, max_hr, avg_hr, activity.get('calories', 0), resting_hr, elev_gain, has_run=1, activity_type=activity_type)
+                            activity.get('steps', 0), min_hr, max_hr, avg_hr, activity.get('calories', 0), resting_hr, elev_gain, activity_type=activity_type)
                     existing_dates.add(date_str.strip())
                     try:
                         # Also add alt normalized forms

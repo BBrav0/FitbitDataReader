@@ -6,16 +6,16 @@ import sqlite3 as sql
 
 # Import cache database as an array
 def load_cache_data():
-    """Load all data from cache.db into a pandas DataFrame, excluding has_run column and filtering for has_run = 1"""
+    """Load all data from cache.db into a pandas DataFrame, filtering for activity_type in ('Run', 'Treadmill run')"""
     con = sql.connect("cache.db")
-    # Get column names excluding has_run
+    # Get all column names
     cursor = con.cursor()
     cursor.execute("PRAGMA table_info(runs)")
     columns_info = cursor.fetchall()
-    column_names = [col[1] for col in columns_info if col[1] != 'has_run']
+    column_names = [col[1] for col in columns_info]
     
-    # Query to select only records where has_run = 1, excluding the has_run column
-    query = "SELECT " + ", ".join(column_names) + " FROM runs WHERE has_run = 1"
+    # Query to select only records where activity_type indicates a run
+    query = "SELECT " + ", ".join(column_names) + " FROM runs WHERE activity_type IN ('Run', 'Treadmill run')"
     df = pd.read_sql_query(query, con)
     con.close()
     return df

@@ -1,34 +1,32 @@
 import sqlite3 as sql
 
-def rename_elev_gain_ft_to_elev_gain():
+def migrate_remove_has_run_column():
     """
-    Rename the elev_gain_ft column to elev_gain in the runs table while preserving all data.
-    This function handles the column rename safely by creating a new table and copying data.
+    Migration script to remove the has_run column from the cache.db database.
+    This creates a new table without the has_run column, copies all data,
+    drops the old table, and renames the new table.
     """
+    print("Starting migration to remove has_run column...")
+    
     try:
         con = sql.connect("cache.db")
         cur = con.cursor()
         
-        # Check if elev_gain_ft column exists
+        # Check if has_run column exists
         cur.execute("PRAGMA table_info(runs)")
         columns = [row[1] for row in cur.fetchall()]
         
-        if 'elev_gain_ft' not in columns:
-            print("Column 'elev_gain_ft' does not exist. Nothing to rename.")
+        if 'has_run' not in columns:
+            print("has_run column not found. Migration not needed.")
             con.close()
             return
         
-        if 'elev_gain' in columns:
-            print("Column 'elev_gain' already exists. Skipping rename.")
-            con.close()
-            return
-        
-        print("Starting column rename from 'elev_gain_ft' to 'elev_gain'...")
+        print("has_run column found. Proceeding with migration...")
         
         # Start transaction
         cur.execute("BEGIN TRANSACTION")
         
-        # Create new table with elev_gain instead of elev_gain_ft
+        # Create new table without has_run column
         cur.execute("""
             CREATE TABLE runs_new (
                 date TEXT PRIMARY KEY,
@@ -44,46 +42,57 @@ def rename_elev_gain_ft_to_elev_gain():
                 avghr INTEGER,
                 calories INTEGER,
                 resting_hr INTEGER,
-                has_run INTEGER
+                activity_type TEXT
             )
         """)
         
-        # Copy all data from old table to new table, mapping elev_gain_ft to elev_gain
+        # Copy all data from old table to new table, excluding has_run column
         cur.execute("""
             INSERT INTO runs_new (
                 date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile,
-                steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run
+                steps, cadence, minhr, maxhr, avghr, calories, resting_hr, activity_type
             )
             SELECT 
-                date, distance, duration, avg_pace, elev_gain_ft, elev_gain_per_mile,
-                steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run
+                date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile,
+                steps, cadence, minhr, maxhr, avghr, calories, resting_hr, activity_type
             FROM runs
         """)
         
-        # Drop old table and rename new table
+        # Drop the old table
         cur.execute("DROP TABLE runs")
+        
+        # Rename new table to runs
         cur.execute("ALTER TABLE runs_new RENAME TO runs")
         
         # Commit transaction
         con.commit()
-        print("Successfully renamed 'elev_gain_ft' to 'elev_gain' while preserving all data.")
+        con.close()
         
-        # Verify the change
+        print("Migration completed successfully!")
+        print("has_run column has been removed from the database.")
+        
+        # Verify the migration
+        con = sql.connect("cache.db")
+        cur = con.cursor()
         cur.execute("PRAGMA table_info(runs)")
-        columns_after = [row[1] for row in cur.fetchall()]
-        if 'elev_gain' in columns_after and 'elev_gain_ft' not in columns_after:
-            print("✓ Column rename verified successfully.")
+        columns = [row[1] for row in cur.fetchall()]
+        con.close()
+        
+        print(f"Current table columns: {columns}")
+        
+        if 'has_run' in columns:
+            print("ERROR: has_run column still exists after migration!")
         else:
-            print("⚠ Warning: Column rename may not have completed correctly.")
+            print("SUCCESS: has_run column successfully removed!")
             
     except Exception as e:
-        print(f"Error during column rename: {e}")
-        if 'con' in locals():
+        print(f"Migration failed: {e}")
+        try:
             con.rollback()
-            print("Transaction rolled back due to error.")
-    finally:
-        if 'con' in locals():
             con.close()
+        except:
+            pass
+        raise
 
 if __name__ == "__main__":
-    rename_elev_gain_ft_to_elev_gain()
+    migrate_remove_has_run_column()
