@@ -82,7 +82,7 @@ def compute_elevation_gain(activity: dict, access_token: str) -> float:
     elev_from_tcx_m = elevation_gain_from_tcx(tcx_xml) if tcx_xml else 0.0
     return elev_from_tcx_m * 3.28084
 
-def cache_run(date_str, distance, duration, steps, minhr, maxhr, avghr, calories, resting_hr=0, elev_gain=None, has_run=1):
+def cache_run(date_str, distance, duration, steps, minhr, maxhr, avghr, calories, resting_hr=0, elev_gain=None, has_run=1, activity_type="Run"):
     con = sql.connect("cache.db")
     cur = con.cursor()
 
@@ -116,9 +116,9 @@ def cache_run(date_str, distance, duration, steps, minhr, maxhr, avghr, calories
     elev_gain_per_mile = round2(elev_gain_per_mile) if elev_gain_per_mile is not None else None
 
     cur.execute("""
-        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (date_str, distance, formatted_duration, average_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run))
+        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run, activity_type) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (date_str, distance, formatted_duration, average_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run, activity_type))
 
     con.commit()
     con.close()
@@ -129,10 +129,10 @@ def cache_no_run(date_str):
     cur = con.cursor()
     cur.execute(
         """
-        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run, activity_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (date_str, None, None, None, None, None, None, None, None, None, None, None, None, 0),
+        (date_str, None, None, None, None, None, None, None, None, None, None, None, None, 0, "Run"),
     )
     con.commit()
     con.close()
@@ -145,10 +145,10 @@ def cache_pending(date_str):
     cur = con.cursor()
     cur.execute(
         """
-        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO runs (date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile, steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run, activity_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (date_str, None, None, None, None, None, None, None, None, None, None, None, None, 0),
+        (date_str, None, None, None, None, None, None, None, None, None, None, None, None, 0, "Run"),
     )
     con.commit()
     con.close()
@@ -165,6 +165,61 @@ def get_resting_heart_rate(date_str):
     except Exception as e:
         print(f"    Error getting resting heart rate: {e}")
         return 0
+
+def get_treadmill_manual_data(date_str, distance):
+    """Get manual data for treadmill runs from user input"""
+    print(f"\n    Treadmill run detected for {date_str}")
+    print(f"    Distance: {distance:.2f} miles")
+    print(f"    Please enter heart rate and elevation data:")
+    
+    # Get heart rate data
+    min_hr = None
+    max_hr = None
+    avg_hr = None
+    
+    try:
+        min_hr_input = input("    Enter minimum heart rate (or press Enter to skip): ").strip()
+        if min_hr_input:
+            min_hr = int(min_hr_input)
+    except ValueError:
+        print("    Invalid minimum heart rate, skipping...")
+    
+    try:
+        max_hr_input = input("    Enter maximum heart rate (or press Enter to skip): ").strip()
+        if max_hr_input:
+            max_hr = int(max_hr_input)
+    except ValueError:
+        print("    Invalid maximum heart rate, skipping...")
+    
+    try:
+        avg_hr_input = input("    Enter average heart rate (or press Enter to skip): ").strip()
+        if avg_hr_input:
+            avg_hr = int(avg_hr_input)
+    except ValueError:
+        print("    Invalid average heart rate, skipping...")
+    
+    # Get elevation percentage
+    elevation_percent = None
+    try:
+        elev_input = input("    Enter treadmill elevation percentage (e.g., 2.5 for 2.5%): ").strip()
+        if elev_input:
+            elevation_percent = float(elev_input)
+    except ValueError:
+        print("    Invalid elevation percentage, using 0%...")
+        elevation_percent = 0.0
+    
+    # Calculate elevation gain
+    elev_gain = 0.0
+    if elevation_percent is not None and distance > 0:
+        elev_gain = distance * elevation_percent * 52.8  # 5280/100 = 52.8
+        print(f"    Calculated elevation gain: {elev_gain:.1f} feet ({elevation_percent}% over {distance:.2f} miles)")
+    
+    return {
+        'min_hr': min_hr,
+        'max_hr': max_hr,
+        'avg_hr': avg_hr,
+        'elev_gain': elev_gain
+    }
 
 # ===== ENVIRONNENTALS =======
 
@@ -219,7 +274,8 @@ cur.execute("""
             avghr INTEGER,
             calories INTEGER,
             resting_hr INTEGER,
-            has_run INTEGER
+            has_run INTEGER,
+            activity_type TEXT
         )
 
 """)
@@ -244,6 +300,9 @@ try:
         con.commit()
     if 'elev_gain_per_mile' not in columns:
         cur.execute("ALTER TABLE runs ADD COLUMN elev_gain_per_mile REAL")
+        con.commit()
+    if 'activity_type' not in columns:
+        cur.execute("ALTER TABLE runs ADD COLUMN activity_type TEXT")
         con.commit()
     # Ensure cadence column exists and is INTEGER type; migrate if needed
     cur.execute("PRAGMA table_info(runs)")
@@ -272,7 +331,8 @@ try:
                     avghr INTEGER,
                     calories INTEGER,
                     resting_hr INTEGER,
-                    has_run INTEGER
+                    has_run INTEGER,
+                    activity_type TEXT
                 )
                 """
             )
@@ -281,13 +341,14 @@ try:
                 """
                 INSERT OR REPLACE INTO runs_new (
                     date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile,
-                    steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run
+                    steps, cadence, minhr, maxhr, avghr, calories, resting_hr, has_run, activity_type
                 )
                 SELECT
                     date, distance, duration, avg_pace, elev_gain, elev_gain_per_mile,
                     steps,
                     CASE WHEN cadence IS NULL THEN NULL ELSE CAST(ROUND(cadence) AS INTEGER) END,
-                    minhr, maxhr, avghr, calories, resting_hr, has_run
+                    minhr, maxhr, avghr, calories, resting_hr, has_run,
+                    CASE WHEN activity_type IS NULL THEN 'Run' ELSE activity_type END
                 FROM runs
                 """
             )
@@ -451,31 +512,46 @@ while curr >= start_date:
         
         if activities:
             for activity in activities:
-                if activity.get('activityParentName', 'N/A') == "Run":
+                activity_type = activity.get('activityParentName', 'N/A')
+                if activity_type in ["Run", "Treadmill run"]:
                     # Skip runs with 0 distance
                     distance = activity.get('distance', 0)
                     if distance == 0:
                         print(f"  ⚠ Skipping run with 0 distance for {curr}")
                         continue
                         
-                    print(f"  ✓ Found run for {curr}")
+                    print(f"  ✓ Found {activity_type.lower()} for {curr}")
                     date_str = str(curr)
-                    print(f"    Run {date_str}:")
+                    print(f"    {activity_type} {date_str}:")
                     print(f"    Activity ID: {activity.get('activityId', 'N/A')}")
                     print(f"    Start Time: {activity.get('startTime', 'N/A')}")
                     print(f"    Duration: {activity.get('duration', 0)}")
                     print(f"    Distance: {round(activity.get('distance', 0), 2)} miles")
                     print(f"    Steps: {activity.get('steps', 0)}")
                     print(f"    Calories: {activity.get('calories', 0)}")
-                    # Try to get heart rate from TCX file
-                    tcx_link = activity.get('tcxLink', '')
-                    avg_hr = 0
-                    max_hr = 0
-                    min_hr = 0
-                    # Compute elevation gain in feet
-                    elev_gain = compute_elevation_gain(activity, ACCESS_TOKEN)
                     
-                    if tcx_link:
+                    # Branch processing based on activity type
+                    if activity_type == "Run":
+                        # Existing outdoor run logic
+                        # Try to get heart rate from TCX file
+                        tcx_link = activity.get('tcxLink', '')
+                        avg_hr = 0
+                        max_hr = 0
+                        min_hr = 0
+                        # Compute elevation gain in feet
+                        elev_gain = compute_elevation_gain(activity, ACCESS_TOKEN)
+                    elif activity_type == "Treadmill run":
+                        # New treadmill run logic
+                        # Get manual data from user
+                        manual_data = get_treadmill_manual_data(date_str, distance)
+                        min_hr = manual_data['min_hr']
+                        max_hr = manual_data['max_hr']
+                        avg_hr = manual_data['avg_hr']
+                        elev_gain = manual_data['elev_gain']
+                        tcx_link = None  # No TCX processing for treadmill runs
+                    
+                    # Process TCX data only for outdoor runs
+                    if activity_type == "Run" and tcx_link:
                         try:
                             import requests
                             tcx_response = requests.get(tcx_link, headers={'Authorization': f'Bearer {ACCESS_TOKEN}'})
@@ -555,7 +631,7 @@ while curr >= start_date:
                     print("-" * 50)
                     # Cache the run data with heart rate info from TCX and resting HR
                     cache_run(date_str, activity.get('distance', 0), activity.get('duration', 0), 
-                            activity.get('steps', 0), min_hr, max_hr, avg_hr, activity.get('calories', 0), resting_hr, elev_gain, has_run=1)
+                            activity.get('steps', 0), min_hr, max_hr, avg_hr, activity.get('calories', 0), resting_hr, elev_gain, has_run=1, activity_type=activity_type)
                     existing_dates.add(date_str.strip())
                     try:
                         # Also add alt normalized forms
