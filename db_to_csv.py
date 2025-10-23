@@ -21,11 +21,11 @@ def export_runs_to_csv(db_path="cache.db", csv_path="runs_data.csv"):
         columns_info = cursor.fetchall()
         column_names = [col[1] for col in columns_info]
 
-        # Query to select all records where activity_type indicates a run, ordered by date ascending
+        # Query to select all records where activity_type indicates a run, ordered by date descending
         query = (
             "SELECT "
             + ", ".join([col for col in column_names])
-            + " FROM runs WHERE activity_type IN ('Run', 'Treadmill run') ORDER BY date(date) ASC"
+            + " FROM runs WHERE activity_type IN ('Run', 'Treadmill run') ORDER BY date(date) DESC"
         )
         cursor.execute(query)
 
