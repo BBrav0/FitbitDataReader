@@ -1,8 +1,26 @@
+#!/usr/bin/env python3
 """
 Fitbit OAuth2 Token Manager
 This script handles automatic token refresh and only requires manual authorization when necessary.
 """
 import os
+import sys
+from pathlib import Path
+
+# Auto-detect and use venv Python if available
+def ensure_venv():
+    """Re-execute script with venv Python if not already using it."""
+    if hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
+        return  # Already in a venv
+    
+    script_dir = Path(__file__).parent.absolute()
+    venv_python = script_dir / "venv" / "bin" / "python3"
+    
+    if venv_python.exists():
+        os.execv(str(venv_python), [str(venv_python)] + sys.argv)
+
+ensure_venv()
+
 import webbrowser
 import urllib.parse
 import requests
