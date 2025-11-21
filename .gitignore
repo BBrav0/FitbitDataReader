@@ -145,6 +145,12 @@ ENV/
 env.bak/
 venv.bak/
 
+# Strava API secrets and cache
+strava_token.json
+strava_activities_cache.json
+strava_activities.json
+strava_streams.json
+
 # Spyder project settings
 .spyderproject
 .spyproject
