@@ -624,18 +624,6 @@ while curr >= start_date:
         curr = curr - timedelta(1)
         continue
 
-    # Ensure a pending placeholder exists so interruptions still leave a row
-    try:
-        con = sql.connect("cache.db")
-        cur = con.cursor()
-        cur.execute("SELECT 1 FROM runs WHERE date = ? OR date = ? OR date LIKE ? OR date LIKE ? LIMIT 1", (padded, unpadded, padded + '%', unpadded + '%'))
-        exists_row = cur.fetchone() is not None
-        con.close()
-    except Exception:
-        exists_row = False
-    if not exists_row:
-        cache_pending(padded)
-    
     days_remaining = (curr - start_date).days + 1
     print(f"Processing {curr} ({days_remaining} days remaining)...")
     
@@ -810,15 +798,28 @@ while curr >= start_date:
         # Don't move to next date - retry the same date
         continue
     except Exception as e:
-        error_msg = str(e)
-        if 'retry-after' in error_msg.lower():
+        error_msg = str(e).lower()
+        error_type = type(e).__name__
+        
+        # Check for rate limit errors - Fitbit library throws various exceptions
+        # Look for: retry-after, rate limit, 429, or HTTPTooManyRequests
+        is_rate_limit = (
+            'retry-after' in error_msg or 
+            'rate limit' in error_msg or 
+            '429' in error_msg or
+            'too many requests' in error_msg or
+            'httptoomany' in error_type.lower()
+        )
+        
+        if is_rate_limit:
             print(f"  WARNING: Rate limit hit for {curr}: {e}")
             print("  Waiting 100 seconds before retry...")
             time.sleep(100)
             # Don't move to next date - retry the same date
+            # Don't increment failure count for rate limits
             continue
         else:
-            print(f"  ❌ Error getting activities for {curr}: {e}")
+            print(f"  ERROR: Error getting activities for {curr}: {e}")
             key = padded_date_string(curr)
             failure_counts[key] = failure_counts.get(key, 0) + 1
             if failure_counts[key] >= 2:
