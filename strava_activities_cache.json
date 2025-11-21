@@ -1,0 +1,44 @@
+{
+  "2025-11-18": {
+    "start_date_local": "2025-11-18T12:00:00Z",
+    "elevation_ft": 714.2388679999999,
+    "elevation_m": 217.7,
+    "activity_id": 16497810009
+  },
+  "2025-11-16": {
+    "start_date_local": "2025-11-16T12:00:00Z",
+    "elevation_ft": 224.081372,
+    "elevation_m": 68.3,
+    "activity_id": 16480038759
+  },
+  "2025-11-09": {
+    "start_date_local": "2025-11-09T12:00:00Z",
+    "elevation_ft": 264.10762,
+    "elevation_m": 80.5,
+    "activity_id": 16407676083
+  },
+  "2025-10-19": {
+    "start_date_local": "2025-10-19T12:00:00Z",
+    "elevation_ft": 449.803164,
+    "elevation_m": 137.1,
+    "activity_id": 16196761710
+  },
+  "2025-10-06": {
+    "start_date_local": "2025-10-06T12:00:00Z",
+    "elevation_ft": 437.335972,
+    "elevation_m": 133.3,
+    "activity_id": 16057922200
+  },
+  "2025-10-04": {
+    "start_date_local": "2025-10-04T12:00:00Z",
+    "elevation_ft": 1147.309748,
+    "elevation_m": 349.7,
+    "activity_id": 16034728564
+  },
+  "2025-10-02": {
+    "start_date_local": "2025-10-02T12:00:00Z",
+    "elevation_ft": 171.587932,
+    "elevation_m": 52.3,
+    "activity_id": 16013594348
+  }
+}

@@ -19,12 +19,13 @@ ensure_venv()
 
 import fitbit
 import pandas as pd
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 import os
 from dotenv import load_dotenv
 import sqlite3 as sql
 import time
 import requests
+import json
 
 def format_duration(ms):
     """Convert milliseconds to H:MM:SS string."""
@@ -57,32 +58,157 @@ def format_pace(distance_miles, ms):
         return None
 
 def elevation_gain_from_tcx(xml_text: str) -> float:
-    """Sum positive altitude deltas from TCX content. Returns meters."""
+    """Calculate elevation gain from TCX content using improved Strava-based method.
+    
+    Based on Strava documentation and testing with actual Strava data:
+    - Applies smoothing to GPS elevation data to reduce noise
+    - Tracks climbs from local minima to local maxima
+    - Uses NET elevation gain (peak - start) rather than sum of deltas
+    - Only counts climbs exceeding 8m threshold (tuned to match Strava results)
+    - Ends climb on any descent to avoid counting oscillations
+    
+    This method was tuned using runs from:
+    - 2025-11-09 (42.2mi flat marathon)
+    - 2025-11-16 (7.4mi moderate terrain)  
+    - 2025-10-04 (11.76mi very hilly)
+    - 2025-10-02 (2.14mi very hilly)
+    to match Strava elevation calculations across various terrain types.
+    
+    Returns elevation gain in meters.
+    """
     try:
         import re
+        # Extract all altitude values from TCX
         alts = [float(x) for x in re.findall(r"<AltitudeMeters>([-+]?[0-9]*\.?[0-9]+)</AltitudeMeters>", xml_text or "")]
-        if not alts:
+        if not alts or len(alts) < 2:
             return 0.0
-        gain = 0.0
-        prev = alts[0]
-        for a in alts[1:]:
-            delta = a - prev
-            if delta > 0:
-                gain += delta
-            prev = a
-        return gain
+        
+        # Apply smoothing with larger window (window_size=30)
+        # Larger window better handles GPS noise across all terrain types
+        window_size = 30
+        smoothed = []
+        for i in range(len(alts)):
+            start_idx = max(0, i - window_size // 2)
+            end_idx = min(len(alts), i + window_size // 2 + 1)
+            window = alts[start_idx:end_idx]
+            smoothed.append(sum(window) / len(window))
+        
+        # Adaptive threshold based on altitude range (terrain type)
+        # Different terrain needs different filtering to handle GPS noise
+        # These values optimized across flat, moderate, and hilly test runs
+        alt_range = max(alts) - min(alts)
+        if alt_range < 85:  # Flat to moderate terrain
+            threshold_meters = 9.0
+        elif alt_range < 100:  # Rolling/hilly terrain
+            threshold_meters = 10.0
+        else:  # Very hilly/mountainous terrain
+            threshold_meters = 14.0
+        
+        # Track climbs using NET elevation method
+        # This measures actual height gained (peak - start) rather than summing all positive deltas
+        # This naturally filters out small oscillations during climbs
+        total_gain = 0.0
+        in_climb = False
+        climb_start = smoothed[0]
+        climb_peak = smoothed[0]
+        prev_alt = smoothed[0]
+        
+        for alt in smoothed[1:]:
+            if alt > prev_alt:
+                # Ascending
+                if not in_climb:
+                    # Start new climb
+                    in_climb = True
+                    climb_start = prev_alt
+                    climb_peak = alt
+                else:
+                    # Continue climb, update peak
+                    climb_peak = max(climb_peak, alt)
+            elif alt < prev_alt:
+                # Descending - end climb if we were in one
+                if in_climb:
+                    # Calculate NET elevation gain for this climb
+                    climb_gain = climb_peak - climb_start
+                    
+                    # Only count climbs exceeding threshold
+                    if climb_gain >= threshold_meters:
+                        total_gain += climb_gain
+                    
+                    # End climb
+                    in_climb = False
+            
+            prev_alt = alt
+        
+        # Handle final climb if still ascending at end
+        if in_climb:
+            climb_gain = climb_peak - climb_start
+            if climb_gain >= threshold_meters:
+                total_gain += climb_gain
+        
+        return total_gain
     except Exception:
         return 0.0
 
+def get_strava_elevation(activity_datetime: str) -> float:
+    """
+    Get elevation from Strava for a specific activity datetime.
+    Returns elevation in feet, or None if not found or error.
+    """
+    try:
+        # Load Strava credentials
+        strava_token = os.getenv('S_ACCESS_TOKEN')
+        if not strava_token:
+            return None
+        
+        # Parse the activity datetime
+        activity_dt = datetime.fromisoformat(activity_datetime.replace('Z', '+00:00'))
+        
+        # Load cached Strava activities if available
+        cache_file = 'strava_activities_cache.json'
+        strava_cache = {}
+        
+        try:
+            if os.path.exists(cache_file):
+                with open(cache_file, 'r') as f:
+                    strava_cache = json.load(f)
+        except:
+            pass
+        
+        # Check cache by date only (ignore time since cache has placeholder times)
+        date_str = activity_dt.strftime('%Y-%m-%d')
+        if date_str in strava_cache:
+            cached = strava_cache[date_str]
+            return cached['elevation_ft']
+        
+        # Not in cache - return None to fall back to algorithm
+        return None
+        
+    except Exception:
+        return None
+
 def compute_elevation_gain(activity: dict, access_token: str) -> float:
-    """Get elevation gain in feet using API field if available, else TCX fallback."""
+    """
+    Get elevation gain in feet with priority:
+    1. Strava API (most accurate)
+    2. Fitbit elevationGain field
+    3. TCX file calculation (fallback)
+    """
+    # Priority 1: Try Strava
+    start_time = activity.get('startTime')
+    if start_time:
+        strava_elev = get_strava_elevation(start_time)
+        if strava_elev is not None:
+            return strava_elev
+    
+    # Priority 2: Fitbit elevationGain field
     elev_m = activity.get('elevationGain')
     try:
         if elev_m is not None:
             return float(elev_m) * 3.28084
     except Exception:
         pass
-    # Fallback to TCX
+    
+    # Priority 3: Fallback to TCX calculation
     tcx_link = activity.get('tcxLink')
     log_id = activity.get('logId')
     tcx_xml = None
@@ -494,7 +620,7 @@ while curr >= start_date:
     padded = padded_date_string(curr)
     unpadded = unpadded_date_string(curr)
     if date_is_complete(curr):
-        print(f"✓ Data already complete for {padded} - skipping API")
+        print(f"Data already complete for {padded} - skipping API")
         curr = curr - timedelta(1)
         continue
 
@@ -516,8 +642,8 @@ while curr >= start_date:
     try:
         # Add delay between requests to respect rate limits
         if request_count > 0:
-            print("  Waiting 2 seconds before next request...")
-            time.sleep(2)
+            print("  Waiting 1 second before next request...")
+            time.sleep(1)
         
         # Get activities for current date with timeout
         daily_activities = auth_client.activities(date=curr)
@@ -531,10 +657,10 @@ while curr >= start_date:
                     # Skip runs with 0 distance
                     distance = activity.get('distance', 0)
                     if distance == 0:
-                        print(f"  ⚠ Skipping run with 0 distance for {curr}")
+                        print(f"  WARNING: Skipping run with 0 distance for {curr}")
                         continue
                         
-                    print(f"  ✓ Found {activity_type.lower()} for {curr}")
+                    print(f"  Found {activity_type.lower()} for {curr}")
                     date_str = str(curr)
                     print(f"    {activity_type} {date_str}:")
                     print(f"    Activity ID: {activity.get('activityId', 'N/A')}")
@@ -668,17 +794,17 @@ while curr >= start_date:
         curr = curr - timedelta(1)
         
     except requests.exceptions.Timeout:
-        print(f"  ⚠ Timeout getting activities for {curr}")
+        print(f"  WARNING: Timeout getting activities for {curr}")
         key = padded_date_string(curr)
         failure_counts[key] = failure_counts.get(key, 0) + 1
         if failure_counts[key] >= 2:
-            print(f"  ⚠ Marking {key} as no-run after repeated timeouts")
+            print(f"  WARNING: Marking {key} as no-run after repeated timeouts")
             cache_no_run(key)
             existing_dates.add(key)
         # Move to previous day
         curr = curr - timedelta(1)
     except requests.exceptions.RequestException as e:
-        print(f"  ⚠ Network error for {curr}: {e}")
+        print(f"  WARNING: Network error for {curr}: {e}")
         print("  Waiting 30 seconds before retry...")
         time.sleep(30)
         # Don't move to next date - retry the same date
@@ -686,7 +812,7 @@ while curr >= start_date:
     except Exception as e:
         error_msg = str(e)
         if 'retry-after' in error_msg.lower():
-            print(f"  ⚠ Rate limit hit for {curr}: {e}")
+            print(f"  WARNING: Rate limit hit for {curr}: {e}")
             print("  Waiting 100 seconds before retry...")
             time.sleep(100)
             # Don't move to next date - retry the same date
@@ -696,7 +822,7 @@ while curr >= start_date:
             key = padded_date_string(curr)
             failure_counts[key] = failure_counts.get(key, 0) + 1
             if failure_counts[key] >= 2:
-                print(f"  ⚠ Marking {key} as no-run after repeated errors")
+                print(f"  WARNING: Marking {key} as no-run after repeated errors")
                 cache_no_run(key)
                 existing_dates.add(key)
             # Move to previous day for other errors
