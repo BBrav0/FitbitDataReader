@@ -215,3 +215,4 @@ __marimo__/
 .env.local
 
 strava_token.json
+.DS_Store
